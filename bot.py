@@ -173,17 +173,28 @@ async def auto_end_giveaway(guild_key, giveaway_id, delay_seconds, channel):
     # Announce winners
     title = "🎊 GIVEAWAY WINNER! 🎊" if len(winner_ids) == 1 else f"🎊 GIVEAWAY WINNERS! 🎊"
     
+    # Check if there's prize distribution
+    prize_dist = giveaway_data[guild_key][giveaway_id].get('prize_distribution')
+    
     winners_text = ""
     for idx, winner_id in enumerate(winner_ids, 1):
         winner = guild.get_member(winner_id)
         winner_tickets = get_user_tickets(guild.id, winner_id, giveaway_id)
-        if len(winner_ids) == 1:
+        
+        if prize_dist and len(prize_dist) >= idx:
+            # Show specific prize for this position
+            winner_prize = prize_dist[idx - 1]
+            winners_text += f"**{idx}.** {winner.mention} - **{winner_prize}** ({winner_tickets} tickets)\n"
+        elif len(winner_ids) == 1:
             winners_text = f"**{winner.mention}** has won **{prize}**!"
         else:
             winners_text += f"**{idx}.** {winner.mention} ({winner_tickets} tickets)\n"
     
     if len(winner_ids) > 1:
-        description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
+        if prize_dist:
+            description = f"**Winners:**\n{winners_text}"
+        else:
+            description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
     else:
         description = winners_text
     
@@ -470,13 +481,14 @@ class GiveawayView(discord.ui.View):
 
 @bot.tree.command(name='giveaway', description='Create a new giveaway (Admin only)')
 @discord.app_commands.describe(
-    prize='The prize for the giveaway',
+    prize='The main prize (or use prize_distribution for multiple)',
     duration_hours='Duration in hours (e.g., 24 for 1 day, 168 for 1 week)',
     winners='Number of winners (default: 1, max: 10)',
+    prize_distribution='Optional: Prizes for each place, separated by | (e.g., "$100 | $50 | $25")',
     channel='The channel to post the giveaway in (optional, defaults to current channel)'
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, winners: int = 1, channel: discord.TextChannel = None):
+async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, winners: int = 1, prize_distribution: str = None, channel: discord.TextChannel = None):
     """Create a new giveaway (Admin only)"""
     # Use specified channel or current channel
     target_channel = channel if channel else interaction.channel
@@ -510,6 +522,17 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     start_time = datetime.now()
     end_time = start_time + timedelta(hours=duration_hours)
     
+    # Parse prize distribution if provided
+    prizes_list = []
+    if prize_distribution:
+        prizes_list = [p.strip() for p in prize_distribution.split('|')]
+        if len(prizes_list) != winners:
+            await interaction.response.send_message(
+                f'❌ Prize distribution must have {winners} prizes separated by | (you provided {len(prizes_list)})',
+                ephemeral=True
+            )
+            return
+    
     # Create new giveaway
     giveaway_data[guild_key][giveaway_id] = {
         'active': True,
@@ -519,7 +542,8 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
         'channel_id': str(target_channel.id),
         'duration_hours': duration_hours,
         'end_time': end_time.isoformat(),
-        'winners': winners
+        'winners': winners,
+        'prize_distribution': prizes_list if prizes_list else None
     }
     save_giveaway_data()
     
@@ -535,10 +559,17 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     # Format end time for Discord timestamp
     end_timestamp = int(end_time.timestamp())
     
-    winners_text = f"{winners} winner" if winners == 1 else f"{winners} winners"
+    # Build prize display
+    if prizes_list:
+        prize_display = "\n".join([f"**{i+1}.** {p}" for i, p in enumerate(prizes_list)])
+        prize_text = f"**Prizes:**\n{prize_display}"
+    else:
+        winners_text = f"{winners} winner" if winners == 1 else f"{winners} winners"
+        prize_text = f"**Prize:** {prize}\n**Winners:** {winners_text}"
+    
     embed = discord.Embed(
         title="🎉 NEW GIVEAWAY! 🎉",
-        description=f"**Prize:** {prize}\n**Winners:** {winners_text}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
+        description=f"{prize_text}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
         color=discord.Color.gold()
     )
     embed.add_field(
@@ -648,17 +679,28 @@ async def end_giveaway(interaction: discord.Interaction, giveaway_id: str, chann
     # Announce winners
     title = "🎊 GIVEAWAY WINNER! 🎊" if len(winner_ids) == 1 else f"🎊 GIVEAWAY WINNERS! 🎊"
     
+    # Check if there's prize distribution
+    prize_dist = giveaway_data[guild_key][giveaway_id].get('prize_distribution')
+    
     winners_text = ""
     for idx, winner_id in enumerate(winner_ids, 1):
         winner = interaction.guild.get_member(winner_id)
         winner_tickets = get_user_tickets(interaction.guild.id, winner_id, giveaway_id)
-        if len(winner_ids) == 1:
+        
+        if prize_dist and len(prize_dist) >= idx:
+            # Show specific prize for this position
+            winner_prize = prize_dist[idx - 1]
+            winners_text += f"**{idx}.** {winner.mention} - **{winner_prize}** ({winner_tickets} tickets)\n"
+        elif len(winner_ids) == 1:
             winners_text = f"**{winner.mention}** has won **{prize}**!"
         else:
             winners_text += f"**{idx}.** {winner.mention} ({winner_tickets} tickets)\n"
     
     if len(winner_ids) > 1:
-        description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
+        if prize_dist:
+            description = f"**Winners:**\n{winners_text}"
+        else:
+            description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
     else:
         description = winners_text
     
