@@ -244,7 +244,12 @@ def get_user_tickets(guild_id, user_id, giveaway_id=None):
     # Bonus tickets from invites (capped at 5)
     invite_count = 0
     if guild_key in invite_data and user_key in invite_data[guild_key]:
-        invite_count = min(invite_data[guild_key][user_key]['invites'], MAX_EXTRA_TICKETS)
+        invite_count = min(invite_data[guild_key][user_key].get('invites', 0), MAX_EXTRA_TICKETS)
+    
+    # Manual bonus tickets (no cap)
+    manual_bonus = 0
+    if guild_key in invite_data and user_key in invite_data[guild_key]:
+        manual_bonus = invite_data[guild_key][user_key].get('manual_bonus', 0)
     
     # Bonus ticket for having the special role
     role_bonus = 0
@@ -259,7 +264,7 @@ def get_user_tickets(guild_id, user_id, giveaway_id=None):
     except:
         pass
     
-    return base_tickets + invite_count + role_bonus
+    return base_tickets + invite_count + role_bonus + manual_bonus
 
 @bot.event
 async def on_ready():
@@ -363,8 +368,10 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     
     # Get invite count
     invite_count = 0
+    manual_bonus = 0
     if guild_key in invite_data and user_key in invite_data[guild_key]:
-        invite_count = invite_data[guild_key][user_key]['invites']
+        invite_count = invite_data[guild_key][user_key].get('invites', 0)
+        manual_bonus = invite_data[guild_key][user_key].get('manual_bonus', 0)
     
     # Check for bonus role
     has_bonus_role = discord.utils.get(member.roles, name=BONUS_ROLE_NAME) is not None
@@ -382,6 +389,8 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     embed.add_field(name="Base Ticket", value="1", inline=True)
     embed.add_field(name=f"{BONUS_ROLE_NAME} Server Tag", value=f"{'✅' if has_bonus_role else '❌'} (+{role_bonus})", inline=True)
     embed.add_field(name="Invite Tickets", value=f"{extra_tickets}/{MAX_EXTRA_TICKETS}", inline=True)
+    if manual_bonus != 0:
+        embed.add_field(name="Manual Bonus", value=f"+{manual_bonus}", inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
     
     if invite_count > MAX_EXTRA_TICKETS:
@@ -938,6 +947,60 @@ async def bot_commands(interaction: discord.Interaction):
     )
     
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name='debuginvites', description='Debug invite data (Admin only)')
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def debug_invites(interaction: discord.Interaction):
+    """Debug invite data"""
+    guild_key = str(interaction.guild.id)
+    
+    if guild_key not in invite_data or not invite_data[guild_key]:
+        await interaction.response.send_message('❌ No invite data found for this server!', ephemeral=True)
+        return
+    
+    debug_text = "**Invite Data:**\n"
+    for user_id, data in invite_data[guild_key].items():
+        member = interaction.guild.get_member(int(user_id))
+        name = member.display_name if member else f"User {user_id}"
+        debug_text += f"{name}: {data['invites']} invites\n"
+    
+    await interaction.response.send_message(debug_text, ephemeral=True)
+
+@bot.tree.command(name='addtickets', description='Manually add bonus tickets to a user (Admin only)')
+@discord.app_commands.describe(
+    user='The user to give bonus tickets to',
+    tickets='Number of bonus tickets to add (can be negative to remove)'
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def add_tickets(interaction: discord.Interaction, user: discord.Member, tickets: int):
+    """Manually add bonus tickets to a user"""
+    guild_key = str(interaction.guild.id)
+    user_key = str(user.id)
+    
+    # Initialize data structures
+    if guild_key not in invite_data:
+        invite_data[guild_key] = {}
+    
+    if user_key not in invite_data[guild_key]:
+        invite_data[guild_key][user_key] = {'invites': 0, 'manual_bonus': 0}
+    
+    if 'manual_bonus' not in invite_data[guild_key][user_key]:
+        invite_data[guild_key][user_key]['manual_bonus'] = 0
+    
+    # Add bonus tickets
+    invite_data[guild_key][user_key]['manual_bonus'] += tickets
+    save_invite_data()
+    
+    # Get updated ticket count
+    total_tickets = get_user_tickets(interaction.guild.id, user.id)
+    manual_bonus = invite_data[guild_key][user_key]['manual_bonus']
+    
+    action = "added" if tickets > 0 else "removed"
+    await interaction.response.send_message(
+        f'✅ {action.capitalize()} {abs(tickets)} bonus ticket(s) for {user.mention}!\n'
+        f'Manual bonus: {manual_bonus} | Total tickets: {total_tickets}',
+        ephemeral=True
+    )
 
 # Run the bot
 if __name__ == '__main__':
