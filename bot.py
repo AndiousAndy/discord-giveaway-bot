@@ -4,7 +4,8 @@ import json
 import os
 import random
 import uuid
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -94,6 +95,85 @@ async def get_invites(guild):
         return await guild.invites()
     except:
         return []
+
+async def auto_end_giveaway(guild_key, giveaway_id, delay_seconds, channel):
+    """Automatically end a giveaway after the specified delay"""
+    await asyncio.sleep(delay_seconds)
+    
+    # Check if giveaway is still active
+    if guild_key not in giveaway_data or giveaway_id not in giveaway_data[guild_key]:
+        return
+    
+    if not giveaway_data[guild_key][giveaway_id].get('active'):
+        return  # Already ended
+    
+    # Get entries
+    if guild_key not in entries_data or giveaway_id not in entries_data[guild_key] or not entries_data[guild_key][giveaway_id]:
+        # No entries, just mark as ended
+        giveaway_data[guild_key][giveaway_id]['active'] = False
+        giveaway_data[guild_key][giveaway_id]['ended_at'] = datetime.now().isoformat()
+        save_giveaway_data()
+        
+        embed = discord.Embed(
+            title="🚫 Giveaway Ended - No Entries",
+            description=f"The giveaway for **{giveaway_data[guild_key][giveaway_id]['prize']}** has ended with no entries.",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Giveaway ID", value=f"`{giveaway_id}`", inline=False)
+        await channel.send(embed=embed)
+        return
+    
+    # Create ticket pool
+    ticket_pool = []
+    guild = channel.guild
+    for user_id in entries_data[guild_key][giveaway_id]:
+        member = guild.get_member(int(user_id))
+        if member and not member.bot:
+            tickets = get_user_tickets(guild.id, int(user_id), giveaway_id)
+            ticket_pool.extend([int(user_id)] * tickets)
+    
+    if not ticket_pool:
+        # No valid entries
+        giveaway_data[guild_key][giveaway_id]['active'] = False
+        giveaway_data[guild_key][giveaway_id]['ended_at'] = datetime.now().isoformat()
+        save_giveaway_data()
+        
+        embed = discord.Embed(
+            title="🚫 Giveaway Ended - No Valid Entries",
+            description=f"The giveaway for **{giveaway_data[guild_key][giveaway_id]['prize']}** has ended with no valid entries.",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Giveaway ID", value=f"`{giveaway_id}`", inline=False)
+        await channel.send(embed=embed)
+        return
+    
+    # Pick winner
+    winner_id = random.choice(ticket_pool)
+    winner = guild.get_member(winner_id)
+    winner_tickets = get_user_tickets(guild.id, winner_id, giveaway_id)
+    
+    # Mark as ended
+    prize = giveaway_data[guild_key][giveaway_id]['prize']
+    giveaway_data[guild_key][giveaway_id]['active'] = False
+    giveaway_data[guild_key][giveaway_id]['winner'] = str(winner_id)
+    giveaway_data[guild_key][giveaway_id]['ended_at'] = datetime.now().isoformat()
+    giveaway_data[guild_key][giveaway_id]['total_entries'] = len(entries_data[guild_key][giveaway_id])
+    save_giveaway_data()
+    
+    # Announce winner
+    embed = discord.Embed(
+        title="🎊 GIVEAWAY WINNER! 🎊",
+        description=f"**{winner.mention}** has won **{prize}**!",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Winner's Tickets", value=f"{winner_tickets}", inline=True)
+    embed.add_field(name="Total Participants", value=f"{len(entries_data[guild_key][giveaway_id])}", inline=True)
+    embed.add_field(name="Total Ticket Entries", value=f"{len(ticket_pool)}", inline=True)
+    embed.add_field(name="Giveaway ID", value=f"`{giveaway_id}`", inline=True)
+    embed.set_thumbnail(url=winner.display_avatar.url)
+    embed.set_footer(text="Congratulations! 🎉")
+    
+    await channel.send(embed=embed)
 
 def get_user_tickets(guild_id, user_id, giveaway_id=None):
     """Calculate total tickets for a user (1 base + invite bonus, max 5 extra)"""
@@ -363,13 +443,22 @@ class GiveawayView(discord.ui.View):
 @bot.tree.command(name='giveaway', description='Create a new giveaway (Admin only)')
 @discord.app_commands.describe(
     prize='The prize for the giveaway',
+    duration_hours='Duration in hours (e.g., 24 for 1 day, 168 for 1 week)',
     channel='The channel to post the giveaway in (optional, defaults to current channel)'
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def create_giveaway(interaction: discord.Interaction, prize: str, channel: discord.TextChannel = None):
+async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, channel: discord.TextChannel = None):
     """Create a new giveaway (Admin only)"""
     # Use specified channel or current channel
     target_channel = channel if channel else interaction.channel
+    
+    # Validate duration
+    if duration_hours < 1:
+        await interaction.response.send_message('❌ Duration must be at least 1 hour!', ephemeral=True)
+        return
+    if duration_hours > 720:  # 30 days max
+        await interaction.response.send_message('❌ Duration cannot exceed 720 hours (30 days)!', ephemeral=True)
+        return
     
     guild_key = str(interaction.guild.id)
     giveaway_id = str(uuid.uuid4())[:8]  # Short unique ID
@@ -380,13 +469,19 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
     if guild_key not in entries_data:
         entries_data[guild_key] = {}
     
+    # Calculate end time
+    start_time = datetime.now()
+    end_time = start_time + timedelta(hours=duration_hours)
+    
     # Create new giveaway
     giveaway_data[guild_key][giveaway_id] = {
         'active': True,
         'prize': prize,
-        'created_at': datetime.now().isoformat(),
+        'created_at': start_time.isoformat(),
         'created_by': str(interaction.user.id),
-        'channel_id': str(target_channel.id)
+        'channel_id': str(target_channel.id),
+        'duration_hours': duration_hours,
+        'end_time': end_time.isoformat()
     }
     save_giveaway_data()
     
@@ -399,9 +494,12 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
     entries_data[guild_key][giveaway_id] = []
     save_entries_data()
     
+    # Format end time for Discord timestamp
+    end_timestamp = int(end_time.timestamp())
+    
     embed = discord.Embed(
         title="🎉 NEW GIVEAWAY! 🎉",
-        description=f"**Prize:** {prize}\n**Giveaway ID:** `{giveaway_id}`",
+        description=f"**Prize:** {prize}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
         color=discord.Color.gold()
     )
     embed.add_field(
@@ -431,7 +529,7 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
     
     # Send confirmation to the user
     await interaction.response.send_message(
-        f'✅ Giveaway created in {target_channel.mention}!\nGiveaway ID: `{giveaway_id}`',
+        f'✅ Giveaway created in {target_channel.mention}!\nGiveaway ID: `{giveaway_id}`\nDuration: {duration_hours} hours\nEnds: <t:{end_timestamp}:F>',
         ephemeral=True
     )
     
@@ -441,6 +539,9 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
     # Store message ID for reference
     giveaway_data[guild_key][giveaway_id]['message_id'] = str(message.id)
     save_giveaway_data()
+    
+    # Schedule automatic ending
+    asyncio.create_task(auto_end_giveaway(guild_key, giveaway_id, duration_hours * 3600, target_channel))
 
 @bot.tree.command(name='endgiveaway', description='End a giveaway and pick a winner (Admin only)')
 @discord.app_commands.describe(
