@@ -428,8 +428,8 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
         ephemeral=True
     )
     
-    # Post the giveaway in the target channel
-    message = await target_channel.send(embed=embed, view=view)
+    # Post the giveaway in the target channel with @everyone mention
+    message = await target_channel.send(content="@everyone", embed=embed, view=view)
     
     # Store message ID for reference
     giveaway_data[guild_key][giveaway_id]['message_id'] = str(message.id)
