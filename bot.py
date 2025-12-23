@@ -563,12 +563,14 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     if prizes_list:
         prize_display = "\n".join([f"**{i+1}.** {p}" for i, p in enumerate(prizes_list)])
         prize_text = f"**Prizes:**\n{prize_display}"
+        title = f"🎉 {prize.upper()} GIVEAWAY! 🎉"
     else:
         winners_text = f"{winners} winner" if winners == 1 else f"{winners} winners"
         prize_text = f"**Prize:** {prize}\n**Winners:** {winners_text}"
+        title = "🎉 NEW GIVEAWAY! 🎉"
     
     embed = discord.Embed(
-        title="🎉 NEW GIVEAWAY! 🎉",
+        title=title,
         description=f"{prize_text}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
         color=discord.Color.gold()
     )
