@@ -35,6 +35,8 @@ ENTRIES_FILE = 'entries_data.json'
 
 # Configuration
 MAX_EXTRA_TICKETS = 5  # Cap at 5 extra tickets from invites
+BONUS_ROLE_NAME = "+EV"  # Role name that gives +1 bonus ticket
+BONUS_ROLE_TICKETS = 1  # Extra tickets for having the bonus role
 
 def load_data():
     """Load all data from files"""
@@ -215,7 +217,7 @@ async def auto_end_giveaway(guild_key, giveaway_id, delay_seconds, channel):
     await channel.send(embed=embed)
 
 def get_user_tickets(guild_id, user_id, giveaway_id=None):
-    """Calculate total tickets for a user (1 base + invite bonus, max 5 extra)"""
+    """Calculate total tickets for a user (1 base + invite bonus + role bonus)"""
     guild_key = str(guild_id)
     user_key = str(user_id)
     
@@ -244,7 +246,20 @@ def get_user_tickets(guild_id, user_id, giveaway_id=None):
     if guild_key in invite_data and user_key in invite_data[guild_key]:
         invite_count = min(invite_data[guild_key][user_key]['invites'], MAX_EXTRA_TICKETS)
     
-    return base_tickets + invite_count
+    # Bonus ticket for having the special role
+    role_bonus = 0
+    try:
+        guild = bot.get_guild(int(guild_id))
+        if guild:
+            member = guild.get_member(int(user_id))
+            if member:
+                bonus_role = discord.utils.get(member.roles, name=BONUS_ROLE_NAME)
+                if bonus_role:
+                    role_bonus = BONUS_ROLE_TICKETS
+    except:
+        pass
+    
+    return base_tickets + invite_count + role_bonus
 
 @bot.event
 async def on_ready():
@@ -351,6 +366,10 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     if guild_key in invite_data and user_key in invite_data[guild_key]:
         invite_count = invite_data[guild_key][user_key]['invites']
     
+    # Check for bonus role
+    has_bonus_role = discord.utils.get(member.roles, name=BONUS_ROLE_NAME) is not None
+    role_bonus = BONUS_ROLE_TICKETS if has_bonus_role else 0
+    
     # Calculate tickets
     total_tickets = get_user_tickets(interaction.guild.id, member.id)
     extra_tickets = min(invite_count, MAX_EXTRA_TICKETS)
@@ -361,12 +380,12 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     )
     embed.add_field(name="Total Tickets", value=f"**{total_tickets}**", inline=False)
     embed.add_field(name="Base Ticket", value="1", inline=True)
-    embed.add_field(name="Invites", value=f"{invite_count}", inline=True)
-    embed.add_field(name="Extra Tickets", value=f"{extra_tickets}/{MAX_EXTRA_TICKETS}", inline=True)
+    embed.add_field(name=f"{BONUS_ROLE_NAME} Role", value=f"{'✅' if has_bonus_role else '❌'} (+{role_bonus})", inline=True)
+    embed.add_field(name="Invite Tickets", value=f"{extra_tickets}/{MAX_EXTRA_TICKETS}", inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
     
     if invite_count > MAX_EXTRA_TICKETS:
-        embed.set_footer(text=f"You've reached the max of {MAX_EXTRA_TICKETS} extra tickets!")
+        embed.set_footer(text=f"You've reached the max of {MAX_EXTRA_TICKETS} invite tickets!")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -485,10 +504,11 @@ class GiveawayView(discord.ui.View):
     duration_hours='Duration in hours (e.g., 24 for 1 day, 168 for 1 week)',
     winners='Number of winners (default: 1, max: 10)',
     prize_distribution='Optional: Prizes for each place, separated by commas (e.g., "$100, $50, $25")',
+    custom_title='Optional: Custom title for the giveaway (e.g., "MEGA GIVEAWAY")',
     channel='The channel to post the giveaway in (optional, defaults to current channel)'
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, winners: int = 1, prize_distribution: str = None, channel: discord.TextChannel = None):
+async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, winners: int = 1, prize_distribution: str = None, custom_title: str = None, channel: discord.TextChannel = None):
     """Create a new giveaway (Admin only)"""
     # Use specified channel or current channel
     target_channel = channel if channel else interaction.channel
@@ -559,15 +579,20 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     # Format end time for Discord timestamp
     end_timestamp = int(end_time.timestamp())
     
-    # Build prize display
+    # Build prize display and title
+    if custom_title:
+        title = f"🎉 {custom_title.upper()} 🎉"
+    elif prizes_list:
+        title = f"🎉 {prize.upper()} GIVEAWAY! 🎉"
+    else:
+        title = "🎉 NEW GIVEAWAY! 🎉"
+    
     if prizes_list:
         prize_display = "\n".join([f"**{i+1}.** {p}" for i, p in enumerate(prizes_list)])
         prize_text = f"**Prizes:**\n{prize_display}"
-        title = f"🎉 {prize.upper()} GIVEAWAY! 🎉"
     else:
         winners_text = f"{winners} winner" if winners == 1 else f"{winners} winners"
         prize_text = f"**Prize:** {prize}\n**Winners:** {winners_text}"
-        title = "🎉 NEW GIVEAWAY! 🎉"
     
     embed = discord.Embed(
         title=title,
@@ -581,7 +606,12 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     )
     embed.add_field(
         name="🎫 Get More Tickets",
-        value="Everyone gets **1 base ticket**!\nInvite friends **after this giveaway starts** to get **1 extra ticket per invite** (max 5 extra tickets)",
+        value=(
+            "Everyone gets **1 base ticket**!\n"
+            f"✨ **{BONUS_ROLE_NAME}** role: **+{BONUS_ROLE_TICKETS} bonus ticket**\n"
+            f"👥 Invite friends: **+1 ticket per invite** (max {MAX_EXTRA_TICKETS})\n"
+            f"**Max total: {1 + MAX_EXTRA_TICKETS + BONUS_ROLE_TICKETS} tickets**"
+        ),
         inline=False
     )
     embed.add_field(
