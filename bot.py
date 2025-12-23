@@ -357,7 +357,7 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     if invite_count > MAX_EXTRA_TICKETS:
         embed.set_footer(text=f"You've reached the max of {MAX_EXTRA_TICKETS} extra tickets!")
     
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Button View for entering giveaway
 class GiveawayView(discord.ui.View):
