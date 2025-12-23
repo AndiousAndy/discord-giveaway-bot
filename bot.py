@@ -771,6 +771,63 @@ async def end_giveaway(interaction: discord.Interaction, giveaway_id: str, chann
     # Announce winner in target channel
     await target_channel.send(embed=embed)
 
+class LeaderboardView(discord.ui.View):
+    def __init__(self, member_tickets, prize, giveaway_id, is_active, total_tickets, page=0):
+        super().__init__(timeout=180)
+        self.member_tickets = member_tickets
+        self.prize = prize
+        self.giveaway_id = giveaway_id
+        self.is_active = is_active
+        self.total_tickets = total_tickets
+        self.page = page
+        self.per_page = 10
+        self.max_pages = (len(member_tickets) - 1) // self.per_page
+        
+        # Update button states
+        self.update_buttons()
+    
+    def update_buttons(self):
+        self.prev_button.disabled = self.page == 0
+        self.next_button.disabled = self.page >= self.max_pages
+    
+    def get_embed(self):
+        status_emoji = "🟢" if self.is_active else "🔴"
+        status_text = "Active" if self.is_active else "Ended"
+        
+        embed = discord.Embed(
+            title=f"🏆 Leaderboard: {self.prize}",
+            description=f"**Giveaway ID:** `{self.giveaway_id}`\n**Status:** {status_emoji} {status_text}\n**Total Participants:** {len(self.member_tickets)}\n**Total Tickets:** {self.total_tickets}",
+            color=discord.Color.gold() if self.is_active else discord.Color.greyple()
+        )
+        
+        start_idx = self.page * self.per_page
+        end_idx = start_idx + self.per_page
+        page_members = self.member_tickets[start_idx:end_idx]
+        
+        for idx, (member, tickets, invites) in enumerate(page_members, start_idx + 1):
+            medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+            percentage = (tickets / self.total_tickets * 100) if self.total_tickets > 0 else 0
+            embed.add_field(
+                name=f"{medal} {member.display_name}",
+                value=f"🎫 {tickets} tickets ({invites} invites) - {percentage:.1f}% chance",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Page {self.page + 1}/{self.max_pages + 1} • Showing {start_idx + 1}-{min(end_idx, len(self.member_tickets))} of {len(self.member_tickets)}")
+        return embed
+    
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.gray)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.gray)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.max_pages, self.page + 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
 @bot.tree.command(name='leaderboard', description='Show the ticket leaderboard for a specific giveaway')
 @discord.app_commands.describe(
     giveaway_id='The ID of the giveaway to show leaderboard for'
@@ -816,28 +873,11 @@ async def leaderboard(interaction: discord.Interaction, giveaway_id: str):
     # Calculate total tickets
     total_tickets = sum(t[1] for t in member_tickets)
     
-    status_emoji = "🟢" if is_active else "🔴"
-    status_text = "Active" if is_active else "Ended"
+    # Create view with pagination
+    view = LeaderboardView(member_tickets, prize, giveaway_id, is_active, total_tickets)
+    embed = view.get_embed()
     
-    embed = discord.Embed(
-        title=f"🏆 Leaderboard: {prize}",
-        description=f"**Giveaway ID:** `{giveaway_id}`\n**Status:** {status_emoji} {status_text}\n**Total Participants:** {len(member_tickets)}\n**Total Tickets:** {total_tickets}",
-        color=discord.Color.gold() if is_active else discord.Color.greyple()
-    )
-    
-    for idx, (member, tickets, invites) in enumerate(member_tickets[:10], 1):
-        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
-        percentage = (tickets / total_tickets * 100) if total_tickets > 0 else 0
-        embed.add_field(
-            name=f"{medal} {member.display_name}",
-            value=f"🎫 {tickets} tickets ({invites} invites) - {percentage:.1f}% chance",
-            inline=False
-        )
-    
-    if len(member_tickets) > 10:
-        embed.set_footer(text=f"Showing top 10 of {len(member_tickets)} participants")
-    
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name='gstatus', description='Check current giveaway status')
 async def giveaway_status(interaction: discord.Interaction):
