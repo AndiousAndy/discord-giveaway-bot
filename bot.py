@@ -484,7 +484,7 @@ class GiveawayView(discord.ui.View):
     prize='The main prize (or use prize_distribution for multiple)',
     duration_hours='Duration in hours (e.g., 24 for 1 day, 168 for 1 week)',
     winners='Number of winners (default: 1, max: 10)',
-    prize_distribution='Optional: Prizes for each place, separated by | (e.g., "$100 | $50 | $25")',
+    prize_distribution='Optional: Prizes for each place, separated by commas (e.g., "$100, $50, $25")',
     channel='The channel to post the giveaway in (optional, defaults to current channel)'
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
@@ -525,10 +525,10 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     # Parse prize distribution if provided
     prizes_list = []
     if prize_distribution:
-        prizes_list = [p.strip() for p in prize_distribution.split('|')]
+        prizes_list = [p.strip() for p in prize_distribution.split(',')]
         if len(prizes_list) != winners:
             await interaction.response.send_message(
-                f'❌ Prize distribution must have {winners} prizes separated by | (you provided {len(prizes_list)})',
+                f'❌ Prize distribution must have {winners} prizes separated by commas (you provided {len(prizes_list)})',
                 ephemeral=True
             )
             return
