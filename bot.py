@@ -380,7 +380,7 @@ async def check_tickets(interaction: discord.Interaction, member: discord.Member
     )
     embed.add_field(name="Total Tickets", value=f"**{total_tickets}**", inline=False)
     embed.add_field(name="Base Ticket", value="1", inline=True)
-    embed.add_field(name=f"{BONUS_ROLE_NAME} Role", value=f"{'✅' if has_bonus_role else '❌'} (+{role_bonus})", inline=True)
+    embed.add_field(name=f"{BONUS_ROLE_NAME} Server Tag", value=f"{'✅' if has_bonus_role else '❌'} (+{role_bonus})", inline=True)
     embed.add_field(name="Invite Tickets", value=f"{extra_tickets}/{MAX_EXTRA_TICKETS}", inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
     
@@ -608,7 +608,7 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
         name="🎫 Get More Tickets",
         value=(
             "Everyone gets **1 base ticket**!\n"
-            f"✨ **{BONUS_ROLE_NAME}** role: **+{BONUS_ROLE_TICKETS} bonus ticket**\n"
+            f"✨ **{BONUS_ROLE_NAME}** server tag: **+{BONUS_ROLE_TICKETS} bonus ticket**\n"
             f"👥 Invite friends: **+1 ticket per invite** (max {MAX_EXTRA_TICKETS})\n"
             f"**Max total: {1 + MAX_EXTRA_TICKETS + BONUS_ROLE_TICKETS} tickets**"
         ),
