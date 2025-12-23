@@ -29,9 +29,11 @@ inviter_tracking = {}  # Track who invited whom: {guild_id: {invited_user_id: in
 active_giveaways = {}  # {message_id: giveaway_id} - Map button clicks to giveaway IDs
 
 # Files for persistent data
-INVITE_FILE = 'invite_data.json'
-GIVEAWAY_FILE = 'giveaway_data.json'
-ENTRIES_FILE = 'entries_data.json'
+# Use /app/data for Railway persistent volume, fallback to current directory for local dev
+DATA_DIR = '/app/data' if os.path.exists('/app/data') else '.'
+INVITE_FILE = os.path.join(DATA_DIR, 'invite_data.json')
+GIVEAWAY_FILE = os.path.join(DATA_DIR, 'giveaway_data.json')
+ENTRIES_FILE = os.path.join(DATA_DIR, 'entries_data.json')
 
 # Configuration
 MAX_EXTRA_TICKETS = 5  # Cap at 5 extra tickets from invites
@@ -998,6 +1000,41 @@ async def add_tickets(interaction: discord.Interaction, user: discord.Member, ti
     action = "added" if tickets > 0 else "removed"
     await interaction.response.send_message(
         f'✅ {action.capitalize()} {abs(tickets)} bonus ticket(s) for {user.mention}!\n'
+        f'Manual bonus: {manual_bonus} | Total tickets: {total_tickets}',
+        ephemeral=True
+    )
+
+@bot.tree.command(name='removetickets', description='Remove bonus tickets from a user (Admin only)')
+@discord.app_commands.describe(
+    user='The user to remove bonus tickets from',
+    tickets='Number of bonus tickets to remove'
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def remove_tickets(interaction: discord.Interaction, user: discord.Member, tickets: int):
+    """Remove bonus tickets from a user"""
+    guild_key = str(interaction.guild.id)
+    user_key = str(user.id)
+    
+    # Initialize data structures
+    if guild_key not in invite_data:
+        invite_data[guild_key] = {}
+    
+    if user_key not in invite_data[guild_key]:
+        invite_data[guild_key][user_key] = {'invites': 0, 'manual_bonus': 0}
+    
+    if 'manual_bonus' not in invite_data[guild_key][user_key]:
+        invite_data[guild_key][user_key]['manual_bonus'] = 0
+    
+    # Remove bonus tickets (make tickets negative)
+    invite_data[guild_key][user_key]['manual_bonus'] -= tickets
+    save_invite_data()
+    
+    # Get updated ticket count
+    total_tickets = get_user_tickets(interaction.guild.id, user.id)
+    manual_bonus = invite_data[guild_key][user_key]['manual_bonus']
+    
+    await interaction.response.send_message(
+        f'✅ Removed {tickets} bonus ticket(s) from {user.mention}!\n'
         f'Manual bonus: {manual_bonus} | Total tickets: {total_tickets}',
         ephemeral=True
     )
