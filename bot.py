@@ -147,30 +147,58 @@ async def auto_end_giveaway(guild_key, giveaway_id, delay_seconds, channel):
         await channel.send(embed=embed)
         return
     
-    # Pick winner
-    winner_id = random.choice(ticket_pool)
-    winner = guild.get_member(winner_id)
-    winner_tickets = get_user_tickets(guild.id, winner_id, giveaway_id)
+    # Get number of winners
+    num_winners = giveaway_data[guild_key][giveaway_id].get('winners', 1)
+    num_winners = min(num_winners, len(set(ticket_pool)))  # Can't have more winners than unique participants
+    
+    # Pick winners (without replacement)
+    winner_ids = []
+    temp_pool = ticket_pool.copy()
+    for _ in range(num_winners):
+        if not temp_pool:
+            break
+        winner_id = random.choice(temp_pool)
+        winner_ids.append(winner_id)
+        # Remove all tickets from this winner to prevent duplicate wins
+        temp_pool = [uid for uid in temp_pool if uid != winner_id]
     
     # Mark as ended
     prize = giveaway_data[guild_key][giveaway_id]['prize']
     giveaway_data[guild_key][giveaway_id]['active'] = False
-    giveaway_data[guild_key][giveaway_id]['winner'] = str(winner_id)
+    giveaway_data[guild_key][giveaway_id]['winners_list'] = [str(wid) for wid in winner_ids]
     giveaway_data[guild_key][giveaway_id]['ended_at'] = datetime.now().isoformat()
     giveaway_data[guild_key][giveaway_id]['total_entries'] = len(entries_data[guild_key][giveaway_id])
     save_giveaway_data()
     
-    # Announce winner
+    # Announce winners
+    title = "🎊 GIVEAWAY WINNER! 🎊" if len(winner_ids) == 1 else f"🎊 GIVEAWAY WINNERS! 🎊"
+    
+    winners_text = ""
+    for idx, winner_id in enumerate(winner_ids, 1):
+        winner = guild.get_member(winner_id)
+        winner_tickets = get_user_tickets(guild.id, winner_id, giveaway_id)
+        if len(winner_ids) == 1:
+            winners_text = f"**{winner.mention}** has won **{prize}**!"
+        else:
+            winners_text += f"**{idx}.** {winner.mention} ({winner_tickets} tickets)\n"
+    
+    if len(winner_ids) > 1:
+        description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
+    else:
+        description = winners_text
+    
     embed = discord.Embed(
-        title="🎊 GIVEAWAY WINNER! 🎊",
-        description=f"**{winner.mention}** has won **{prize}**!",
+        title=title,
+        description=description,
         color=discord.Color.green()
     )
-    embed.add_field(name="Winner's Tickets", value=f"{winner_tickets}", inline=True)
     embed.add_field(name="Total Participants", value=f"{len(entries_data[guild_key][giveaway_id])}", inline=True)
     embed.add_field(name="Total Ticket Entries", value=f"{len(ticket_pool)}", inline=True)
     embed.add_field(name="Giveaway ID", value=f"`{giveaway_id}`", inline=True)
-    embed.set_thumbnail(url=winner.display_avatar.url)
+    
+    if len(winner_ids) == 1:
+        embed.set_thumbnail(url=guild.get_member(winner_ids[0]).display_avatar.url)
+    
     embed.set_footer(text="Congratulations! 🎉")
     
     await channel.send(embed=embed)
@@ -444,10 +472,11 @@ class GiveawayView(discord.ui.View):
 @discord.app_commands.describe(
     prize='The prize for the giveaway',
     duration_hours='Duration in hours (e.g., 24 for 1 day, 168 for 1 week)',
+    winners='Number of winners (default: 1, max: 10)',
     channel='The channel to post the giveaway in (optional, defaults to current channel)'
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, channel: discord.TextChannel = None):
+async def create_giveaway(interaction: discord.Interaction, prize: str, duration_hours: int, winners: int = 1, channel: discord.TextChannel = None):
     """Create a new giveaway (Admin only)"""
     # Use specified channel or current channel
     target_channel = channel if channel else interaction.channel
@@ -458,6 +487,14 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
         return
     if duration_hours > 720:  # 30 days max
         await interaction.response.send_message('❌ Duration cannot exceed 720 hours (30 days)!', ephemeral=True)
+        return
+    
+    # Validate winners
+    if winners < 1:
+        await interaction.response.send_message('❌ Must have at least 1 winner!', ephemeral=True)
+        return
+    if winners > 10:
+        await interaction.response.send_message('❌ Cannot have more than 10 winners!', ephemeral=True)
         return
     
     guild_key = str(interaction.guild.id)
@@ -481,7 +518,8 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
         'created_by': str(interaction.user.id),
         'channel_id': str(target_channel.id),
         'duration_hours': duration_hours,
-        'end_time': end_time.isoformat()
+        'end_time': end_time.isoformat(),
+        'winners': winners
     }
     save_giveaway_data()
     
@@ -497,9 +535,10 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     # Format end time for Discord timestamp
     end_timestamp = int(end_time.timestamp())
     
+    winners_text = f"{winners} winner" if winners == 1 else f"{winners} winners"
     embed = discord.Embed(
         title="🎉 NEW GIVEAWAY! 🎉",
-        description=f"**Prize:** {prize}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
+        description=f"**Prize:** {prize}\n**Winners:** {winners_text}\n**Giveaway ID:** `{giveaway_id}`\n**Ends:** <t:{end_timestamp}:R> (<t:{end_timestamp}:F>)",
         color=discord.Color.gold()
     )
     embed.add_field(
@@ -529,7 +568,7 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, duration
     
     # Send confirmation to the user
     await interaction.response.send_message(
-        f'✅ Giveaway created in {target_channel.mention}!\nGiveaway ID: `{giveaway_id}`\nDuration: {duration_hours} hours\nEnds: <t:{end_timestamp}:F>',
+        f'✅ Giveaway created in {target_channel.mention}!\nGiveaway ID: `{giveaway_id}`\nWinners: {winners}\nDuration: {duration_hours} hours\nEnds: <t:{end_timestamp}:F>',
         ephemeral=True
     )
     
@@ -583,37 +622,64 @@ async def end_giveaway(interaction: discord.Interaction, giveaway_id: str, chann
         await interaction.response.send_message('❌ No valid entries found!', ephemeral=True)
         return
     
-    # Pick a random winner
-    winner_id = random.choice(ticket_pool)
-    winner = interaction.guild.get_member(winner_id)
+    # Get number of winners
+    num_winners = giveaway_data[guild_key][giveaway_id].get('winners', 1)
+    num_winners = min(num_winners, len(set(ticket_pool)))  # Can't have more winners than unique participants
     
-    # Get winner's ticket count
-    winner_tickets = get_user_tickets(interaction.guild.id, winner_id, giveaway_id)
+    # Pick winners (without replacement)
+    winner_ids = []
+    temp_pool = ticket_pool.copy()
+    for _ in range(num_winners):
+        if not temp_pool:
+            break
+        winner_id = random.choice(temp_pool)
+        winner_ids.append(winner_id)
+        # Remove all tickets from this winner to prevent duplicate wins
+        temp_pool = [uid for uid in temp_pool if uid != winner_id]
     
     # Mark giveaway as ended
     prize = giveaway_data[guild_key][giveaway_id]['prize']
     giveaway_data[guild_key][giveaway_id]['active'] = False
-    giveaway_data[guild_key][giveaway_id]['winner'] = str(winner_id)
+    giveaway_data[guild_key][giveaway_id]['winners_list'] = [str(wid) for wid in winner_ids]
     giveaway_data[guild_key][giveaway_id]['ended_at'] = datetime.now().isoformat()
     giveaway_data[guild_key][giveaway_id]['total_entries'] = len(entries_data[guild_key][giveaway_id])
     save_giveaway_data()
     
-    # Announce winner
+    # Announce winners
+    title = "🎊 GIVEAWAY WINNER! 🎊" if len(winner_ids) == 1 else f"🎊 GIVEAWAY WINNERS! 🎊"
+    
+    winners_text = ""
+    for idx, winner_id in enumerate(winner_ids, 1):
+        winner = interaction.guild.get_member(winner_id)
+        winner_tickets = get_user_tickets(interaction.guild.id, winner_id, giveaway_id)
+        if len(winner_ids) == 1:
+            winners_text = f"**{winner.mention}** has won **{prize}**!"
+        else:
+            winners_text += f"**{idx}.** {winner.mention} ({winner_tickets} tickets)\n"
+    
+    if len(winner_ids) > 1:
+        description = f"**Prize:** {prize}\n\n**Winners:**\n{winners_text}"
+    else:
+        description = winners_text
+    
     embed = discord.Embed(
-        title="🎊 GIVEAWAY WINNER! 🎊",
-        description=f"**{winner.mention}** has won **{prize}**!",
+        title=title,
+        description=description,
         color=discord.Color.green()
     )
-    embed.add_field(name="Winner's Tickets", value=f"{winner_tickets}", inline=True)
     embed.add_field(name="Total Participants", value=f"{len(entries_data[guild_key][giveaway_id])}", inline=True)
     embed.add_field(name="Total Ticket Entries", value=f"{len(ticket_pool)}", inline=True)
     embed.add_field(name="Giveaway ID", value=f"`{giveaway_id}`", inline=True)
-    embed.set_thumbnail(url=winner.display_avatar.url)
+    
+    if len(winner_ids) == 1:
+        embed.set_thumbnail(url=interaction.guild.get_member(winner_ids[0]).display_avatar.url)
+    
     embed.set_footer(text="Congratulations! 🎉")
     
     # Send confirmation to admin
+    winners_count_text = "Winner" if len(winner_ids) == 1 else f"{len(winner_ids)} winners"
     await interaction.response.send_message(
-        f'✅ Giveaway `{giveaway_id}` ended! Winner announced in {target_channel.mention}',
+        f'✅ Giveaway `{giveaway_id}` ended! {winners_count_text} announced in {target_channel.mention}',
         ephemeral=True
     )
     
