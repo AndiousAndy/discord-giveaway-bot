@@ -53,19 +53,23 @@ def load_data():
     
     if os.path.exists(ENTRIES_FILE):
         with open(ENTRIES_FILE, 'r') as f:
-            loaded_entries = json.load(f)
-            # Migrate old format to new format
-            entries_data = {}
-            for guild_key, value in loaded_entries.items():
-                if isinstance(value, list):
-                    # Old format: {guild_id: [user_ids]} - skip it, start fresh
-                    print(f'Detected old entries format for guild {guild_key}, resetting...')
-                    entries_data[guild_key] = {}
-                elif isinstance(value, dict):
-                    # New format: {guild_id: {giveaway_id: [user_ids]}}
-                    entries_data[guild_key] = value
-                else:
-                    entries_data[guild_key] = {}
+            try:
+                loaded_entries = json.load(f)
+                # Migrate old format to new format
+                entries_data = {}
+                for guild_key, value in loaded_entries.items():
+                    if isinstance(value, list):
+                        # Old format: {guild_id: [user_ids]} - skip it, start fresh
+                        print(f'Detected old entries format for guild {guild_key}, resetting...')
+                        entries_data[guild_key] = {}
+                    elif isinstance(value, dict):
+                        # New format: {guild_id: {giveaway_id: [user_ids]}}
+                        entries_data[guild_key] = value
+                    else:
+                        entries_data[guild_key] = {}
+            except (json.JSONDecodeError, ValueError):
+                print('Error loading entries_data.json, starting fresh...')
+                entries_data = {}
     else:
         entries_data = {}
 
@@ -388,6 +392,9 @@ async def create_giveaway(interaction: discord.Interaction, prize: str, channel:
     
     # Initialize entries for this giveaway
     if guild_key not in entries_data:
+        entries_data[guild_key] = {}
+    # Safety check: ensure it's a dict, not a list
+    if not isinstance(entries_data[guild_key], dict):
         entries_data[guild_key] = {}
     entries_data[guild_key][giveaway_id] = []
     save_entries_data()
